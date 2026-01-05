@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aura Campaign Link Generator</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom font */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+        .code-display {
+            word-break: break-all;
+            user-select: all;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+    <div class="w-full max-w-3xl bg-white shadow-2xl rounded-xl p-6 md:p-10 border border-gray-100">
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="text-3xl font-extrabold text-blue-800">Campaign Link Generator</h1>
+            <p class="text-gray-500 mt-2">Enter one or more campaign codes, separated by commas (`,`), to generate Deep Links and Web Links.</p>
+        </header>
+
+        <!-- Input and Button -->
+        <div class="space-y-4">
+            <label for="campaignCode" class="block text-sm font-medium text-gray-700">Campaign Code(s)</label>
+            <input type="text" id="campaignCode" placeholder="e.g., 279862QD-ASG-KW-OO3, 6710005, 442001RR-PFC-SA-OO2"
+                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-gray-800 transition duration-150 ease-in-out shadow-sm uppercase">
+
+            <button onclick="generateLinks()"
+                    class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg shadow-md transition duration-200 ease-in-out transform hover:scale-[1.01] focus:outline-none focus:ring-4 focus:ring-blue-500 focus:ring-opacity-50">
+                Generate Links
+            </button>
+        </div>
+
+        <!-- Error/Status Message -->
+        <div id="statusMessage" class="mt-4 p-3 rounded-lg hidden" role="alert"></div>
+
+        <!-- Output Links Container -->
+        <div id="outputArea" class="mt-8 space-y-6 hidden">
+            <h2 class="text-xl font-semibold text-gray-800 border-b pb-2">Generated Links</h2>
+            <div id="resultsContainer" class="space-y-6">
+                <!-- Individual link results will be injected here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Mapping of Offer Codes found in the campaign code to their final link structure
+        const OFFER_MAP = {
+            "QD": { name: "QR_CODE", path: "offers" },
+            "QF": { name: "QR_CODE", path: "offers" },
+
+            "APT": { name: "ACTIVATE_OFFER", path: "offers" },
+            "AP": { name: "ACTIVATE_OFFER", path: "offers" },
+            "AM": { name: "ACTIVATE_OFFER", path: "offers" },
+            "BD": { name: "ACTIVATE_OFFER", path: "offers" },
+
+            "MD": { name: "MISSION_BASED_OFFER", path: "offers" },
+            "MP": { name: "MISSION_BASED_OFFER", path: "offers" },
+
+            "QP": { name: "LIVE_OFFER", path: "offers" },
+            "LD": { name: "LIVE_OFFER", path: "offers" },
+
+            "RR": { name: "REWARD_OFFER", path: "rewards" } // Special case: uses /rewards and no ?offertype
+        };
+
+        // Mapping of Market Codes to full Country Names
+        const MARKET_MAP = {
+            "KWT": "Kuwait",
+            "KW": "Kuwait",
+            "SAU": "KSA",
+            "SA": "KSA",
+            "ARE": "UAE",
+            "AE": "UAE",
+            "BHR": "Bahrain",
+            "BH": "Bahrain",
+            "QAT": "Qatar",
+            "QT": "Qatar"
+        };
+
+
+        /**
+         * Clears the status and output areas.
+         */
+        function clearOutput() {
+            document.getElementById('statusMessage').classList.add('hidden');
+            document.getElementById('statusMessage').innerHTML = '';
+            document.getElementById('outputArea').classList.add('hidden');
+            document.getElementById('resultsContainer').innerHTML = '';
+        }
+
+        /**
+         * Displays an error message in the status area.
+         * @param {string} message - The error message to display.
+         */
+        function displayError(message) {
+            const statusDiv = document.getElementById('statusMessage');
+            statusDiv.classList.remove('hidden', 'bg-green-100', 'text-green-800', 'bg-yellow-100', 'text-yellow-800');
+            statusDiv.classList.add('bg-red-100', 'text-red-800');
+            statusDiv.innerHTML = `<p class="font-semibold">Error:</p><p>${message}</p>`;
+            document.getElementById('outputArea').classList.add('hidden');
+        }
+
+        /**
+         * Displays a warning message in the status area.
+         * @param {string} message - The warning message to display.
+         */
+        function displayWarning(message) {
+            const statusDiv = document.getElementById('statusMessage');
+            statusDiv.classList.remove('hidden', 'bg-green-100', 'text-green-800', 'bg-red-100', 'text-red-800');
+            statusDiv.classList.add('bg-yellow-100', 'text-yellow-800');
+            statusDiv.innerHTML = `<p class="font-semibold">Warning:</p><p>${message}</p>`;
+        }
+
+
+        /**
+         * Parses the campaign code to determine the offer type, link path, market code, and market name.
+         * @param {string} campaignCode - The cleaned, uppercase campaign code.
+         * @returns {{offerTypeName: string, path: string, code: string, marketCode: string, marketName: string} | null}
+         */
+        function parseCampaignCodeInfo(campaignCode) {
+            const parts = campaignCode.split('-');
+            const idSegment = parts[0];
+
+            let offerTypeName = null;
+            let path = null;
+            let code = campaignCode;
+            let marketCode = null;
+            let marketName = "N/A"; // Default if market segment is not found
+
+            // 1. Determine Offer Type
+            let isSimpleCode = parts.length === 1 && idSegment.length > 0;
+            let endsWithOfferCode = false;
+
+            for (const offerCode in OFFER_MAP) {
+                if (idSegment.endsWith(offerCode)) {
+                    endsWithOfferCode = true;
+                    offerTypeName = OFFER_MAP[offerCode].name;
+                    path = OFFER_MAP[offerCode].path;
+                    break;
+                }
+            }
+
+            if (isSimpleCode && !endsWithOfferCode) {
+                // Simple code (e.g., 6710005) is QR_CODE
+                offerTypeName = "QR_CODE";
+                path = "offers";
+            }
+
+            if (!offerTypeName) {
+                return null; // Cannot determine offer type
+            }
+
+            // 2. Determine Market Code and Name (Expected in the 3rd segment, index 2)
+            if (parts.length >= 3) {
+                // The market code is the third segment (index 2)
+                marketCode = parts[2].toUpperCase();
+                marketName = MARKET_MAP[marketCode] || `Unknown (${marketCode})`;
+            }
+
+            return { offerTypeName, path, code, marketCode, marketName };
+        }
+
+        /**
+         * Generates the HTML for a single campaign code result card.
+         * @param {string} campaignCode - The processed campaign code.
+         * @param {Object} parsedInfo - The full data object determined from the code.
+         * @returns {string} The HTML string for the result card.
+         */
+        function generateLinkResultHtml(campaignCode, parsedInfo) {
+            const { offerTypeName, path, code, marketName } = parsedInfo;
+
+            // Determine the query string based on the offer type
+            let queryString = '';
+            if (offerTypeName !== 'REWARD_OFFER') {
+                // All non-reward offers use the ?offertype query parameter
+                queryString = `?offertype=${offerTypeName}`;
+            }
+
+            // Construct Final Links
+            const deepLink = `auramena://${path}/${code}${queryString}`;
+            const websiteLink = `https://aura-mena.com/${path}/${code}${queryString}`;
+
+            // Unique IDs are needed for the copy functionality
+            // Sanitizing code to create valid HTML IDs
+            const safeCode = campaignCode.replace(/[^a-zA-Z0-9]/g, '_'); 
+            const deepLinkId = `deepLink_${safeCode}`;
+            const websiteLinkId = `websiteLink_${safeCode}`;
+
+            return `
+                <div class="bg-gray-50 p-5 rounded-xl border border-gray-200 shadow-sm transition duration-150 ease-in-out">
+                    <h3 class="text-lg font-bold text-gray-900 mb-3 border-b pb-2 flex justify-between items-center">
+                        <span>Code: <span class="text-blue-600">${campaignCode}</span></span>
+                        <span class="text-sm font-medium text-gray-500 py-1 px-2 rounded bg-gray-200">Market: ${marketName}</span>
+                    </h3>
+                    <div class="space-y-4">
+                        <!-- Deep Link Card -->
+                        <div class="bg-blue-50 p-3 rounded-lg border border-blue-200">
+                            <div class="flex justify-between items-center mb-1">
+                                <span class="text-sm font-semibold text-blue-700">Deep Link (<span class="font-normal">${offerTypeName}</span>)</span>
+                                <button onclick="copyToClipboard('${deepLinkId}')"
+                                        class="text-xs bg-blue-200 hover:bg-blue-300 text-blue-800 font-medium py-1 px-3 rounded-full transition duration-150">
+                                    Copy
+                                </button>
+                            </div>
+                            <p id="${deepLinkId}" class="code-display text-xs text-blue-900 bg-white p-2 rounded-md border border-blue-100">${deepLink}</p>
+                        </div>
+
+                        <!-- Website Link Card -->
+                        <div class="bg-green-50 p-3 rounded-lg border border-green-200">
+                            <div class="flex justify-between items-center mb-1">
+                                <span class="text-sm font-semibold text-green-700">Website Link</span>
+                                <button onclick="copyToClipboard('${websiteLinkId}')"
+                                        class="text-xs bg-green-200 hover:bg-green-300 text-green-800 font-medium py-1 px-3 rounded-full transition duration-150">
+                                    Copy
+                                </button>
+                            </div>
+                            <p id="${websiteLinkId}" class="code-display text-xs text-green-900 bg-white p-2 rounded-md border border-green-100">${websiteLink}</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        /**
+         * Main function to generate and display the links for single or multiple codes.
+         */
+        function generateLinks() {
+            clearOutput();
+            const rawInput = document.getElementById('campaignCode').value.trim();
+
+            if (!rawInput) {
+                displayError("Please enter one or more campaign codes separated by commas.");
+                return;
+            }
+
+            // Split by comma, remove whitespace, and filter out empty strings
+            const rawCodes = rawInput.split(',').map(code => code.trim()).filter(code => code.length > 0);
+
+            if (rawCodes.length === 0) {
+                 displayError("No valid campaign codes found. Please separate codes by commas.");
+                 return;
+            }
+
+            const resultsContainer = document.getElementById('resultsContainer');
+            resultsContainer.innerHTML = ''; // Clear previous results
+
+            let allResultsHtml = '';
+            let successfulCodesCount = 0;
+            let failedCodes = [];
+
+            rawCodes.forEach(rawCode => {
+                const campaignCode = rawCode.toUpperCase();
+                const parsedInfo = parseCampaignCodeInfo(campaignCode);
+
+                if (parsedInfo) {
+                    allResultsHtml += generateLinkResultHtml(campaignCode, parsedInfo);
+                    successfulCodesCount++;
+                } else {
+                    failedCodes.push(rawCode);
+                }
+            });
+
+            if (allResultsHtml.length > 0) {
+                resultsContainer.innerHTML = allResultsHtml;
+                document.getElementById('outputArea').classList.remove('hidden');
+
+                // Update the heading to reflect the number of codes processed
+                const heading = document.querySelector('#outputArea h2');
+                heading.textContent = `Generated Links (${successfulCodesCount} of ${rawCodes.length} Code${rawCodes.length > 1 ? 's' : ''})`;
+            }
+
+            // Handle status messages
+            if (failedCodes.length > 0) {
+                 const failedMessage = `Could not process ${failedCodes.length} code(s): ${failedCodes.join(', ')}. Please ensure they contain a valid offer type suffix (QD, APT, MD, QP, or RR).`;
+
+                 if (successfulCodesCount > 0) {
+                     displayWarning(failedMessage); // Warning if some succeeded
+                 } else {
+                    // If everything failed, display a red error
+                    displayError(failedMessage);
+                 }
+            } else if (successfulCodesCount > 0) {
+                 // Full success message
+                 const statusDiv = document.getElementById('statusMessage');
+                 statusDiv.classList.remove('hidden', 'bg-red-100', 'text-red-800', 'bg-yellow-100', 'text-yellow-800');
+                 statusDiv.classList.add('bg-green-100', 'text-green-800');
+                 statusDiv.innerHTML = `<p class="font-medium">Success! Links generated for all ${successfulCodesCount} code${successfulCodesCount > 1 ? 's' : ''}.</p>`;
+                 setTimeout(() => statusDiv.classList.add('hidden'), 3000);
+            }
+        }
+
+        /**
+         * Copies text from a specified element to the clipboard and shows a transient notification.
+         * @param {string} elementId - The ID of the element containing the text to copy.
+         */
+        function copyToClipboard(elementId) {
+            const copyText = document.getElementById(elementId).textContent;
+            
+            // Use a temporary textarea
+            const tempInput = document.createElement('textarea');
+            tempInput.value = copyText;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            
+            let message = 'Copied!';
+            try {
+                document.execCommand('copy');
+            } catch (err) {
+                console.error('Copy command failed:', err);
+                message = 'Copy failed.';
+            }
+
+            document.body.removeChild(tempInput);
+
+            // Create and show a transient notification
+            const notification = document.createElement('div');
+            notification.textContent = message;
+            notification.className = 'fixed top-4 right-4 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-xl opacity-0 transition-opacity duration-300 z-50';
+            document.body.appendChild(notification);
+
+            // Show and hide the notification
+            setTimeout(() => notification.style.opacity = 1, 10);
+            setTimeout(() => {
+                notification.style.opacity = 0;
+                setTimeout(() => document.body.removeChild(notification), 1800);
+            }, 1500);
+        }
+
+        // Set focus to the input field and enable Enter key submission on load
+        window.onload = () => {
+            const inputField = document.getElementById('campaignCode');
+            inputField.focus();
+
+            // Add keydown listener to trigger link generation on Enter key press
+            inputField.addEventListener('keydown', (event) => {
+                // Check for 'Enter' key. event.key is the modern way.
+                if (event.key === 'Enter') {
+                    event.preventDefault(); // Prevent default action (like form submission)
+                    generateLinks();
+                }
+            });
+        };
+
+    </script>
+    <p class="fixed bottom-0 inset-x-0 bg-blue-400 text-red-700 p-2 text-center"">Created by Somnath Kaushik with ❤️</p>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
